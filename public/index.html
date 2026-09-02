@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Order Report — THA KSA</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --panel:#ffffff; --ink:#12151a; --muted:#666f7d;
+    --line:#e3e6ea; --accent:#1f6feb; --accent-ink:#ffffff;
+    --ok-bg:#e6f6ec; --ok-ink:#1a7f43;
+    --warn-bg:#fdf2e2; --warn-ink:#9a6412;
+    --bad-bg:#fdecec; --bad-ink:#b3261e;
+    --shadow:0 1px 2px rgba(16,20,26,.06),0 4px 16px rgba(16,20,26,.05);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0e1116; --panel:#161b22; --ink:#e6edf3; --muted:#8b949e;
+      --line:#262c36; --accent:#4b8ffb; --accent-ink:#0e1116;
+      --ok-bg:#0f2f1d; --ok-ink:#4ec97f;
+      --warn-bg:#33260d; --warn-ink:#e0b25f;
+      --bad-bg:#3a1a18; --bad-ink:#f38b83;
+      --shadow:0 1px 2px rgba(0,0,0,.4),0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  .wrap{max-width:1500px;margin:0 auto;padding:20px 18px 60px}
+
+  header{display:flex;flex-wrap:wrap;gap:14px;align-items:baseline;justify-content:space-between;margin-bottom:18px}
+  h1{font-size:19px;margin:0;letter-spacing:-.01em}
+  .sub{color:var(--muted);font-size:12.5px}
+  .live{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted)}
+  .dot{width:7px;height:7px;border-radius:50%;background:#2ea043;box-shadow:0 0 0 0 rgba(46,160,67,.6);animation:pulse 2s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(46,160,67,.5)}70%{box-shadow:0 0 0 7px rgba(46,160,67,0)}100%{box-shadow:0 0 0 0 rgba(46,160,67,0)}}
+  .dot.stale{background:#d29922;animation:none}
+  .dot.err{background:#f85149;animation:none}
+
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px}
+  .tile{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:13px 15px;box-shadow:var(--shadow)}
+  .tile .k{color:var(--muted);font-size:11.5px;text-transform:uppercase;letter-spacing:.05em}
+  .tile .v{font-size:22px;font-weight:600;margin-top:4px;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+
+  .controls{display:flex;flex-wrap:wrap;gap:9px;align-items:center;margin-bottom:14px}
+  input,select,button{font:inherit;color:var(--ink);background:var(--panel);
+    border:1px solid var(--line);border-radius:8px;padding:8px 11px}
+  input[type=search]{min-width:250px;flex:1 1 250px}
+  button{cursor:pointer}
+  button.primary{background:var(--accent);color:var(--accent-ink);border-color:transparent;font-weight:500}
+  button:disabled{opacity:.55;cursor:default}
+
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);overflow:hidden}
+  .scroll{overflow-x:auto}
+  table{border-collapse:collapse;width:100%;font-size:13px}
+  th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top;white-space:nowrap}
+  th{position:sticky;top:0;background:var(--panel);z-index:1;font-size:11.5px;text-transform:uppercase;
+     letter-spacing:.05em;color:var(--muted);font-weight:600;cursor:pointer;user-select:none}
+  th .ar{opacity:.45;font-size:10px}
+  tbody tr:hover{background:color-mix(in srgb,var(--accent) 7%,transparent)}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  td.wrap-cell{white-space:normal;min-width:230px;max-width:340px}
+  .muted{color:var(--muted)}
+  .items{font-size:12.2px;line-height:1.45}
+  .sku{color:var(--muted);font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11.5px;font-weight:500;text-transform:capitalize}
+  .p-ok{background:var(--ok-bg);color:var(--ok-ink)}
+  .p-warn{background:var(--warn-bg);color:var(--warn-ink)}
+  .p-bad{background:var(--bad-bg);color:var(--bad-ink)}
+  .p-none{background:var(--line);color:var(--muted)}
+
+  .state{padding:44px 20px;text-align:center;color:var(--muted)}
+  .spin{width:22px;height:22px;border:2.5px solid var(--line);border-top-color:var(--accent);
+        border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 12px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .err-box{margin:0 0 14px;padding:11px 14px;border-radius:9px;background:var(--bad-bg);color:var(--bad-ink);font-size:13px}
+  footer{margin-top:14px;color:var(--muted);font-size:12px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div>
+      <h1>Order Report</h1>
+      <div class="sub" id="storeline">THA KSA — loading…</div>
+    </div>
+    <div class="live">
+      <span class="dot" id="dot"></span>
+      <span id="status">Connecting…</span>
+    </div>
+  </header>
+
+  <div id="errbox" class="err-box" hidden></div>
+
+  <div class="tiles">
+    <div class="tile"><div class="k">Orders</div><div class="v" id="t-count">—</div></div>
+    <div class="tile"><div class="k">Revenue</div><div class="v" id="t-rev">—</div></div>
+    <div class="tile"><div class="k">Average order</div><div class="v" id="t-avg">—</div></div>
+    <div class="tile"><div class="k">Paid</div><div class="v" id="t-paid">—</div></div>
+    <div class="tile"><div class="k">Unfulfilled</div><div class="v" id="t-unful">—</div></div>
+  </div>
+
+  <div class="controls">
+    <input type="search" id="q" placeholder="Search order #, name, phone, email, SKU, product…" autocomplete="off">
+    <select id="fin">
+      <option value="">All payment statuses</option>
+      <option value="paid">Paid</option>
+      <option value="pending">Pending</option>
+      <option value="refunded">Refunded</option>
+      <option value="partially_refunded">Partially refunded</option>
+      <option value="voided">Voided</option>
+    </select>
+    <select id="limit">
+      <option value="50">Last 50</option>
+      <option value="100">Last 100</option>
+      <option value="250" selected>Last 250</option>
+    </select>
+    <label class="live" style="gap:5px"><input type="checkbox" id="auto" checked style="width:auto;padding:0"> Auto-refresh</label>
+    <button id="refresh" class="primary">Refresh</button>
+    <button id="csv">Export CSV</button>
+  </div>
+
+  <div class="panel">
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th data-sort="order_number">Order <span class="ar"></span></th>
+            <th data-sort="created_at">Date <span class="ar"></span></th>
+            <th data-sort="customer">Customer <span class="ar"></span></th>
+            <th data-sort="phone">Phone <span class="ar"></span></th>
+            <th data-sort="email">Email <span class="ar"></span></th>
+            <th>Items</th>
+            <th data-sort="total" style="text-align:right">Total <span class="ar"></span></th>
+            <th data-sort="financial_status">Payment <span class="ar"></span></th>
+            <th data-sort="gateway">Gateway <span class="ar"></span></th>
+            <th data-sort="fulfillment_status">Fulfilment <span class="ar"></span></th>
+          </tr>
+        </thead>
+        <tbody id="tbody">
+          <tr><td colspan="10"><div class="state"><div class="spin"></div>Loading orders…</div></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <footer>
+    <span id="shown"></span>
+    <span id="updated"></span>
+  </footer>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var API = "/apps/order-report-proxy";
+  var REFRESH_MS = 60000;
+
+  var raw = [], view = [], sortKey = "created_at", sortDir = -1, timer = null, busy = false;
+
+  var $ = function(id){ return document.getElementById(id); };
+  var esc = function(s){
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
+      return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+    });
+  };
+
+  function money(n, cur){
+    var v = Number(n || 0);
+    try {
+      return new Intl.NumberFormat("en-US",{style:"currency",currency:cur||"SAR",maximumFractionDigits:2}).format(v);
+    } catch(e){ return v.toFixed(2) + " " + (cur||""); }
+  }
+  function dateFmt(s){
+    if(!s) return "—";
+    var d = new Date(s);
+    if(isNaN(d)) return "—";
+    return d.toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}) +
+           " " + d.toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"});
+  }
+
+  // Flatten one Shopify order into the row shape the table uses.
+  function row(o){
+    var ci = o.customer_info || o.customer || {};
+    var ship = o.shipping_address || {};
+    var name = ci.full_name ||
+               [ci.first_name, ci.last_name].filter(Boolean).join(" ") ||
+               ship.name || "";
+    var gw = (o.payment_gateway_names && o.payment_gateway_names.length)
+               ? o.payment_gateway_names.join(", ")
+               : (o.gateway || "");
+    var items = (o.line_items || []).map(function(li){
+      return { title: li.title || li.name || "", sku: li.sku || "", qty: li.quantity || 0 };
+    });
+    return {
+      id: o.id,
+      order_number: o.order_number || o.number || 0,
+      label: o.name || ("#" + (o.order_number || "")),
+      created_at: o.created_at || "",
+      customer: name,
+      phone: ci.phone || ship.phone || "",
+      email: ci.email || o.email || o.contact_email || "",
+      city: ship.city || "",
+      items: items,
+      total: parseFloat(o.total_price || 0) || 0,
+      currency: o.currency || "SAR",
+      financial_status: o.financial_status || "",
+      fulfillment_status: o.fulfillment_status || "unfulfilled",
+      gateway: gw,
+      _hay: [
+        o.name, o.order_number, name, ci.phone, ci.email, ship.city, gw,
+        items.map(function(i){ return i.title + " " + i.sku; }).join(" ")
+      ].join(" ").toLowerCase()
+    };
+  }
+
+  function pill(v, kind){
+    var t = v || "—";
+    var cls = "p-none";
+    if(kind === "fin"){
+      if(v === "paid") cls = "p-ok";
+      else if(v === "pending" || v === "authorized" || v === "partially_paid") cls = "p-warn";
+      else if(v === "refunded" || v === "voided" || v === "partially_refunded") cls = "p-bad";
+    } else {
+      if(v === "fulfilled") cls = "p-ok";
+      else if(v === "partial") cls = "p-warn";
+      else cls = "p-warn";
+    }
+    return '<span class="pill ' + cls + '">' + esc(String(t).replace(/_/g," ")) + "</span>";
+  }
+
+  function setStatus(text, kind){
+    $("status").textContent = text;
+    $("dot").className = "dot" + (kind ? " " + kind : "");
+  }
+
+  function tiles(rows){
+    var cur = rows.length ? rows[0].currency : "SAR";
+    var rev = rows.reduce(function(s,r){ return s + r.total; }, 0);
+    var paid = rows.filter(function(r){ return r.financial_status === "paid"; }).length;
+    var unful = rows.filter(function(r){ return r.fulfillment_status !== "fulfilled"; }).length;
+    $("t-count").textContent = rows.length;
+    $("t-rev").textContent = money(rev, cur);
+    $("t-avg").textContent = rows.length ? money(rev / rows.length, cur) : "—";
+    $("t-paid").textContent = paid + (rows.length ? " / " + rows.length : "");
+    $("t-unful").textContent = unful;
+  }
+
+  function apply(){
+    var q = $("q").value.trim().toLowerCase();
+    var fin = $("fin").value;
+    view = raw.filter(function(r){
+      if(fin && r.financial_status !== fin) return false;
+      if(!q) return true;
+      return r._hay.indexOf(q) !== -1;
+    });
+    view.sort(function(a,b){
+      var x = a[sortKey], y = b[sortKey];
+      if(sortKey === "created_at"){ x = new Date(x||0).getTime(); y = new Date(y||0).getTime(); }
+      if(typeof x === "string" || typeof y === "string"){
+        x = String(x||"").toLowerCase(); y = String(y||"").toLowerCase();
+      }
+      return (x < y ? -1 : x > y ? 1 : 0) * sortDir;
+    });
+    render();
+    tiles(view);
+  }
+
+  function render(){
+    var tb = $("tbody");
+    if(!view.length){
+      tb.innerHTML = '<tr><td colspan="10"><div class="state">No orders match this filter.</div></td></tr>';
+      $("shown").textContent = "";
+      return;
+    }
+    var html = view.map(function(r){
+      var its = r.items.map(function(i){
+        return esc(i.title) + (i.qty > 1 ? ' <span class="muted">x' + i.qty + "</span>" : "") +
+               (i.sku ? '<br><span class="sku">' + esc(i.sku) + "</span>" : "");
+      }).join('<br>');
+      return "<tr>" +
+        "<td><strong>" + esc(r.label) + "</strong></td>" +
+        "<td>" + esc(dateFmt(r.created_at)) + "</td>" +
+        "<td>" + (esc(r.customer) || '<span class="muted">—</span>') +
+          (r.city ? '<br><span class="muted">' + esc(r.city) + "</span>" : "") + "</td>" +
+        "<td>" + (r.phone ? '<a href="tel:' + esc(r.phone) + '">' + esc(r.phone) + "</a>" : '<span class="muted">—</span>') + "</td>" +
+        "<td>" + (r.email ? '<a href="mailto:' + esc(r.email) + '">' + esc(r.email) + "</a>" : '<span class="muted">—</span>') + "</td>" +
+        '<td class="wrap-cell items">' + (its || '<span class="muted">—</span>') + "</td>" +
+        '<td class="num"><strong>' + esc(money(r.total, r.currency)) + "</strong></td>" +
+        "<td>" + pill(r.financial_status, "fin") + "</td>" +
+        "<td>" + (esc(r.gateway) || '<span class="muted">—</span>') + "</td>" +
+        "<td>" + pill(r.fulfillment_status, "ful") + "</td>" +
+      "</tr>";
+    }).join("");
+    tb.innerHTML = html;
+    $("shown").textContent = "Showing " + view.length + " of " + raw.length + " orders";
+  }
+
+  function load(){
+    if(busy) return;
+    busy = true;
+    $("refresh").disabled = true;
+    setStatus("Refreshing…", "stale");
+    var url = API + "/orders?include_transactions=false&limit=" + encodeURIComponent($("limit").value);
+    fetch(url, { headers: { "Accept": "application/json" }, cache: "no-store" })
+      .then(function(res){
+        if(!res.ok) throw new Error("HTTP " + res.status);
+        return res.json();
+      })
+      .then(function(data){
+        if(!data || data.success === false) throw new Error((data && data.message) || "API returned an error");
+        raw = (data.orders || []).map(row);
+        $("errbox").hidden = true;
+        $("storeline").textContent = "THA KSA — live from Shopify";
+        $("updated").textContent = "Updated " + new Date().toLocaleTimeString("en-GB");
+        setStatus("Live", "");
+        apply();
+      })
+      .catch(function(err){
+        setStatus("Error", "err");
+        var b = $("errbox");
+        b.hidden = false;
+        b.textContent = "Could not load orders: " + err.message + " — retrying automatically.";
+        if(!raw.length){
+          $("tbody").innerHTML = '<tr><td colspan="10"><div class="state">No data yet.</div></td></tr>';
+        }
+      })
+      .then(function(){
+        busy = false;
+        $("refresh").disabled = false;
+      });
+  }
+
+  function csv(){
+    var head = ["Order","Date","Customer","Phone","Email","City","Items","SKUs","Total","Currency","Payment","Gateway","Fulfilment"];
+    var lines = [head];
+    view.forEach(function(r){
+      lines.push([
+        r.label, r.created_at, r.customer, r.phone, r.email, r.city,
+        r.items.map(function(i){ return i.title + (i.qty>1 ? " x"+i.qty : ""); }).join(" | "),
+        r.items.map(function(i){ return i.sku; }).filter(Boolean).join(" | "),
+        r.total, r.currency, r.financial_status, r.gateway, r.fulfillment_status
+      ]);
+    });
+    var out = lines.map(function(cols){
+      return cols.map(function(c){
+        var s = String(c == null ? "" : c);
+        return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
+      }).join(",");
+    }).join("\r\n");
+    // BOM keeps Arabic text readable when the file is opened in Excel.
+    var blob = new Blob(["﻿" + out], { type: "text/csv;charset=utf-8;" });
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "order-report-" + new Date().toISOString().slice(0,10) + ".csv";
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(a.href); }, 1000);
+  }
+
+  function schedule(){
+    if(timer) clearInterval(timer);
+    if($("auto").checked) timer = setInterval(load, REFRESH_MS);
+  }
+
+  $("q").addEventListener("input", apply);
+  $("fin").addEventListener("change", apply);
+  $("limit").addEventListener("change", load);
+  $("refresh").addEventListener("click", load);
+  $("csv").addEventListener("click", csv);
+  $("auto").addEventListener("change", schedule);
+
+  Array.prototype.forEach.call(document.querySelectorAll("th[data-sort]"), function(th){
+    th.addEventListener("click", function(){
+      var k = th.getAttribute("data-sort");
+      if(sortKey === k) sortDir = -sortDir; else { sortKey = k; sortDir = 1; }
+      Array.prototype.forEach.call(document.querySelectorAll("th .ar"), function(s){ s.textContent = ""; });
+      th.querySelector(".ar").textContent = sortDir === 1 ? "▲" : "▼";
+      apply();
+    });
+  });
+
+  // Pull fresh data when the tab regains focus, so a left-open dashboard is never stale.
+  document.addEventListener("visibilitychange", function(){
+    if(document.visibilityState === "visible") load();
+  });
+
+  load();
+  schedule();
+})();
+</script>
+</body>
+</html>

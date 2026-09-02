@@ -8,6 +8,7 @@ const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
 const { google } = require('googleapis');
+const path = require('path');
 require('dotenv').config();
 
 const app = express();
@@ -26,6 +27,34 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.use(express.json());
+
+// ---- Report UI ----------------------------------------------------------
+// The API routes below live under the Shopify App Proxy prefix, so the bare
+// domain had no handler at all. Serve the dashboard from both the root (for
+// opening the Railway URL directly) and the proxy path (for the storefront).
+app.use(express.static(path.join(__dirname, 'public'), { index: false }));
+
+const REPORT_PAGE = path.join(__dirname, 'public', 'index.html');
+
+// Optional gate for the dashboard. Unset REPORT_PASSWORD => open, as before.
+// NOTE: this covers the HTML page only. The /orders JSON endpoint stays open
+// so the Shopify storefront keeps working; lock that down separately.
+function guardReport(req, res, next) {
+  const expected = process.env.REPORT_PASSWORD;
+  if (!expected) return next();
+  const header = req.headers.authorization || '';
+  if (header.startsWith('Basic ')) {
+    const decoded = Buffer.from(header.slice(6), 'base64').toString('utf8');
+    if (decoded.slice(decoded.indexOf(':') + 1) === expected) return next();
+  }
+  res.set('WWW-Authenticate', 'Basic realm="Order Report"').status(401).send('Authentication required.');
+}
+
+app.get('/', guardReport, (req, res) => res.sendFile(REPORT_PAGE));
+app.get('/apps/order-report-proxy', guardReport, (req, res) => res.sendFile(REPORT_PAGE));
+app.get('/apps/order-report-proxy/', guardReport, (req, res) => res.sendFile(REPORT_PAGE));
+app.get('/apps/order-report-proxy/report', guardReport, (req, res) => res.sendFile(REPORT_PAGE));
+
 
 // Shopify API Configuration
 const SHOPIFY_STORE = process.env.SHOPIFY_STORE_DOMAIN; // e.g., 'your-store.myshopify.com'
@@ -457,7 +486,7 @@ app.get('/apps/order-report-proxy/orders', async (req, res) => {
       financial_status,
       created_at_min,
       created_at_max,
-      include_transactions = 'true' // Optional: set to 'false' to skip transaction enrichment
+      include_transactions = 'false' // Opt-in: 'true' adds Stripe/gateway detail but is slow (one API call per order)
     } = req.query;
 
     // Fetch orders
