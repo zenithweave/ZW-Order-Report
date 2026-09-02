@@ -7,22 +7,13 @@
 <title>Order Report — THA KSA</title>
 <style>
   :root{
+    color-scheme: light; /* keep native controls light even in a dark-mode browser */
     --bg:#f6f7f9; --panel:#ffffff; --ink:#12151a; --muted:#666f7d;
     --line:#e3e6ea; --accent:#1f6feb; --accent-ink:#ffffff;
     --ok-bg:#e6f6ec; --ok-ink:#1a7f43;
     --warn-bg:#fdf2e2; --warn-ink:#9a6412;
     --bad-bg:#fdecec; --bad-ink:#b3261e;
     --shadow:0 1px 2px rgba(16,20,26,.06),0 4px 16px rgba(16,20,26,.05);
-  }
-  @media (prefers-color-scheme: dark){
-    :root{
-      --bg:#0e1116; --panel:#161b22; --ink:#e6edf3; --muted:#8b949e;
-      --line:#262c36; --accent:#4b8ffb; --accent-ink:#0e1116;
-      --ok-bg:#0f2f1d; --ok-ink:#4ec97f;
-      --warn-bg:#33260d; --warn-ink:#e0b25f;
-      --bad-bg:#3a1a18; --bad-ink:#f38b83;
-      --shadow:0 1px 2px rgba(0,0,0,.4),0 4px 16px rgba(0,0,0,.3);
-    }
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);
