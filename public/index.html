@@ -70,6 +70,14 @@
   @keyframes spin{to{transform:rotate(360deg)}}
   .err-box{margin:0 0 14px;padding:11px 14px;border-radius:9px;background:var(--bad-bg);color:var(--bad-ink);font-size:13px}
   footer{margin-top:14px;color:var(--muted);font-size:12px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
+  .daterow{padding:10px 12px;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow)}
+  .lbl{font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600}
+  .arrow{color:var(--muted)}
+  input[type=date]{min-width:150px}
+  .note{font-size:12.5px}
+  .note.ok{color:var(--ok-ink)}
+  .note.warn{color:var(--warn-ink)}
+  button.ghost{background:transparent}
 </style>
 </head>
 <body>
@@ -112,8 +120,28 @@
       <option value="250" selected>Last 250</option>
     </select>
     <label class="live" style="gap:5px"><input type="checkbox" id="auto" checked style="width:auto;padding:0"> Auto-refresh</label>
-    <button id="refresh" class="primary">Refresh</button>
+    <button id="pull" class="primary">Pull new orders</button>
+    <button id="refresh" class="ghost">Reload all</button>
     <button id="csv">Export CSV</button>
+    <span id="pullnote" class="note"></span>
+  </div>
+
+  <div class="controls daterow">
+    <span class="lbl">Date range</span>
+    <select id="preset">
+      <option value="all" selected>All time</option>
+      <option value="today">Today</option>
+      <option value="7">Last 7 days</option>
+      <option value="30">Last 30 days</option>
+      <option value="month">This month</option>
+      <option value="custom">Custom…</option>
+    </select>
+    <input type="date" id="from" aria-label="From date">
+    <span class="arrow">&rarr;</span>
+    <input type="date" id="to" aria-label="To date">
+    <button id="applyDate" class="primary">Apply</button>
+    <button id="clearDate" class="ghost">Clear</button>
+    <span id="rangenote" class="note muted"></span>
   </div>
 
   <div class="panel">
@@ -292,39 +320,135 @@
     $("shown").textContent = "Showing " + view.length + " of " + raw.length + " orders";
   }
 
-  function load(){
-    if(busy) return;
-    busy = true;
-    $("refresh").disabled = true;
-    setStatus("Refreshing…", "stale");
-    var url = API + "/orders?include_transactions=false&limit=" + encodeURIComponent($("limit").value);
-    fetch(url, { headers: { "Accept": "application/json" }, cache: "no-store" })
+  // Shopify stores THA KSA timestamps at +03:00; build day boundaries in that
+  // offset so "today" means the merchant's today, not the viewer's.
+  var STORE_TZ = "+03:00";
+  function ymd(d){
+    return d.getFullYear() + "-" +
+           String(d.getMonth()+1).padStart(2,"0") + "-" +
+           String(d.getDate()).padStart(2,"0");
+  }
+  function dayStart(v){ return v + "T00:00:00" + STORE_TZ; }
+  function dayEnd(v){ return v + "T23:59:59" + STORE_TZ; }
+
+  function activeRange(){
+    var f = $("from").value, t = $("to").value;
+    if(f && t && f > t){ return { bad: true }; }
+    return { from: f || "", to: t || "" };
+  }
+
+  function rangeNote(){
+    var r = activeRange();
+    var el = $("rangenote");
+    if(r.bad){ el.className = "note warn"; el.textContent = "From date is after To date."; return; }
+    if(!r.from && !r.to){ el.className = "note muted"; el.textContent = "Showing all time."; return; }
+    el.className = "note muted";
+    el.textContent = "Filtering " + (r.from || "earliest") + " to " + (r.to || "now") + " (store time).";
+  }
+
+  function buildUrl(extraMin){
+    var r = activeRange();
+    var qs = ["include_transactions=false", "limit=" + encodeURIComponent($("limit").value)];
+    // extraMin (used by Pull new) overrides the range start with the newest
+    // order already on screen, so we only ask Shopify for what we're missing.
+    var min = extraMin || (r.from ? dayStart(r.from) : "");
+    if(min) qs.push("created_at_min=" + encodeURIComponent(min));
+    if(r.to) qs.push("created_at_max=" + encodeURIComponent(dayEnd(r.to)));
+    return API + "/orders?" + qs.join("&");
+  }
+
+  function note(msg, kind){
+    var el = $("pullnote");
+    el.className = "note" + (kind ? " " + kind : " muted");
+    el.textContent = msg || "";
+    if(msg){
+      clearTimeout(el._t);
+      el._t = setTimeout(function(){ el.textContent = ""; }, 6000);
+    }
+  }
+
+  function setBusy(on){
+    busy = on;
+    $("refresh").disabled = on;
+    $("pull").disabled = on;
+    $("applyDate").disabled = on;
+  }
+
+  function request(url){
+    return fetch(url, { headers: { "Accept": "application/json" }, cache: "no-store" })
       .then(function(res){
         if(!res.ok) throw new Error("HTTP " + res.status);
         return res.json();
       })
       .then(function(data){
         if(!data || data.success === false) throw new Error((data && data.message) || "API returned an error");
-        raw = (data.orders || []).map(row);
-        $("errbox").hidden = true;
-        $("storeline").textContent = "THA KSA — live from Shopify";
-        $("updated").textContent = "Updated " + new Date().toLocaleTimeString("en-GB");
-        setStatus("Live", "");
-        apply();
-      })
-      .catch(function(err){
-        setStatus("Error", "err");
-        var b = $("errbox");
-        b.hidden = false;
-        b.textContent = "Could not load orders: " + err.message + " — retrying automatically.";
-        if(!raw.length){
-          $("tbody").innerHTML = '<tr><td colspan="10"><div class="state">No data yet.</div></td></tr>';
-        }
-      })
-      .then(function(){
-        busy = false;
-        $("refresh").disabled = false;
+        return (data.orders || []).map(row);
       });
+  }
+
+  function fail(err){
+    setStatus("Error", "err");
+    var b = $("errbox");
+    b.hidden = false;
+    b.textContent = "Could not load orders: " + err.message + " — retrying automatically.";
+    if(!raw.length){
+      $("tbody").innerHTML = '<tr><td colspan="10"><div class="state">No data yet.</div></td></tr>';
+    }
+  }
+
+  function done(){
+    $("errbox").hidden = true;
+    $("storeline").textContent = "THA KSA — live from Shopify";
+    $("updated").textContent = "Updated " + new Date().toLocaleTimeString("en-GB");
+    setStatus("Live", "");
+    apply();
+  }
+
+  // Full reload for the current filter set.
+  function load(){
+    if(busy) return;
+    var r = activeRange();
+    if(r.bad){ note("Fix the date range first.", "warn"); return; }
+    setBusy(true);
+    setStatus("Refreshing…", "stale");
+    request(buildUrl())
+      .then(function(rows){ raw = rows; done(); })
+      .catch(fail)
+      .then(function(){ setBusy(false); });
+  }
+
+  // Incremental: ask only for orders newer than the newest one on screen,
+  // then merge. Falls back to a full load when the table is empty.
+  function pullNew(){
+    if(busy) return;
+    if(!raw.length){ return load(); }
+    var r = activeRange();
+    if(r.bad){ note("Fix the date range first.", "warn"); return; }
+
+    var newest = raw.reduce(function(acc, x){
+      var t = new Date(x.created_at).getTime();
+      return t > acc ? t : acc;
+    }, 0);
+    if(!newest){ return load(); }
+
+    setBusy(true);
+    setStatus("Checking for new orders…", "stale");
+    // created_at_min is inclusive, so the newest order comes back too; dedupe by id.
+    request(buildUrl(new Date(newest).toISOString()))
+      .then(function(rows){
+        var seen = {};
+        raw.forEach(function(x){ seen[x.id] = true; });
+        var fresh = rows.filter(function(x){ return !seen[x.id]; });
+        if(fresh.length){
+          raw = fresh.concat(raw);
+          note("Added " + fresh.length + " new order" + (fresh.length === 1 ? "" : "s") + ".", "ok");
+        } else {
+          note("No new orders.");
+        }
+        done();
+      })
+      .catch(fail)
+      .then(function(){ setBusy(false); });
   }
 
   function csv(){
@@ -355,15 +479,37 @@
 
   function schedule(){
     if(timer) clearInterval(timer);
-    if($("auto").checked) timer = setInterval(load, REFRESH_MS);
+    if($("auto").checked) timer = setInterval(pullNew, REFRESH_MS);
   }
 
   $("q").addEventListener("input", apply);
   $("fin").addEventListener("change", apply);
   $("limit").addEventListener("change", load);
   $("refresh").addEventListener("click", load);
+  $("pull").addEventListener("click", pullNew);
   $("csv").addEventListener("click", csv);
   $("auto").addEventListener("change", schedule);
+  $("applyDate").addEventListener("click", function(){ rangeNote(); load(); });
+  $("clearDate").addEventListener("click", function(){
+    $("from").value = ""; $("to").value = ""; $("preset").value = "all";
+    rangeNote(); load();
+  });
+  $("from").addEventListener("change", function(){ $("preset").value = "custom"; rangeNote(); });
+  $("to").addEventListener("change", function(){ $("preset").value = "custom"; rangeNote(); });
+
+  $("preset").addEventListener("change", function(){
+    var v = $("preset").value, now = new Date(), from = "", to = "";
+    if(v === "today"){ from = to = ymd(now); }
+    else if(v === "7" || v === "30"){
+      var d = new Date(now); d.setDate(d.getDate() - (parseInt(v,10) - 1));
+      from = ymd(d); to = ymd(now);
+    }
+    else if(v === "month"){ from = ymd(new Date(now.getFullYear(), now.getMonth(), 1)); to = ymd(now); }
+    else if(v === "all"){ from = ""; to = ""; }
+    else { return; } // custom: leave the inputs alone
+    $("from").value = from; $("to").value = to;
+    rangeNote(); load();
+  });
 
   Array.prototype.forEach.call(document.querySelectorAll("th[data-sort]"), function(th){
     th.addEventListener("click", function(){
@@ -377,9 +523,10 @@
 
   // Pull fresh data when the tab regains focus, so a left-open dashboard is never stale.
   document.addEventListener("visibilitychange", function(){
-    if(document.visibilityState === "visible") load();
+    if(document.visibilityState === "visible") pullNew();
   });
 
+  rangeNote();
   load();
   schedule();
 })();
