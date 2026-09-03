@@ -583,6 +583,7 @@ app.get('/apps/order-report-proxy/health', (req, res) => {
   res.json({
     success: true,
     status: 'healthy',
+    store: SHOPIFY_STORE,
     timestamp: new Date().toISOString(),
     cache_status: {
       has_customer_data: Object.keys(customerDataCache).length > 0,

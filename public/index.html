@@ -234,9 +234,29 @@
     var shipSet = o.total_shipping_price_set && o.total_shipping_price_set.shop_money;
     var shipping = shipSet ? (parseFloat(shipSet.amount || 0) || 0)
       : (o.shipping_lines || []).reduce(function(sum, l){ return sum + (parseFloat(l.price || 0) || 0); }, 0);
+    // Pick the transaction that actually represents the payment: a successful
+    // sale/capture first, then a pending sale (COD), ignoring voids/failures.
+    var txs = o.transactions || [];
+    var tx = null;
+    for (var ti = 0; ti < txs.length; ti++) {
+      var k = txs[ti].kind, st = txs[ti].status;
+      if ((k === "sale" || k === "capture") && st === "success") { tx = txs[ti]; break; }
+      if (!tx && k === "sale" && st === "pending") { tx = txs[ti]; }
+    }
+    if (!tx && txs.length) { tx = txs[0]; }
+    // receipt.payment_id is the gateway's own reference (Stripe); fall back to
+    // the authorization code, then Shopify's internal transaction id.
+    var txRef = "";
+    if (tx) {
+      var rcpt = tx.receipt || {};
+      txRef = rcpt.payment_id || tx.authorization || (tx.id ? String(tx.id) : "");
+    }
+
     return {
       id: o.id,
       order_number: o.order_number || o.number || 0,
+      txRef: txRef,
+      hasTx: txs.length > 0,
       label: o.name || ("#" + (o.order_number || "")),
       created_at: o.created_at || "",
       customer: name,
@@ -277,6 +297,17 @@
       else cls = "p-warn";
     }
     return '<span class="pill ' + cls + '">' + esc(String(t).replace(/_/g," ")) + "</span>";
+  }
+
+  var DASH = "-"; // their convention for an empty cell
+  var STORE = "";
+  fetch(API + "/health", { cache: "no-store" })
+    .then(function(r){ return r.json(); })
+    .then(function(h){ if(h && h.store) STORE = h.store; })
+    .catch(function(){ /* admin links simply stay blank */ });
+
+  function adminLink(id){
+    return (STORE && id) ? ("https://" + STORE + "/admin/orders/" + id) : DASH;
   }
 
   function setStatus(text, kind){
@@ -372,9 +403,10 @@
     el.textContent = "Filtering " + (r.from || "earliest") + " to " + (r.to || "now") + " (store time).";
   }
 
-  function buildUrl(extraMin){
+  function buildUrl(extraMin, withTx){
     var r = activeRange();
-    var qs = ["include_transactions=false", "limit=" + encodeURIComponent($("limit").value)];
+    var qs = ["include_transactions=" + (withTx ? "true" : "false"),
+              "limit=" + encodeURIComponent($("limit").value)];
     // extraMin (used by Pull new) overrides the range start with the newest
     // order already on screen, so we only ask Shopify for what we're missing.
     var min = extraMin || (r.from ? dayStart(r.from) : "");
@@ -489,7 +521,6 @@
     "Transaction ID","Payment Link","Gross Sales"
   ];
 
-  var DASH = "-"; // their convention for an empty cell
   function orDash(v){
     return (v === null || v === undefined || v === "") ? DASH : v;
   }
@@ -504,6 +535,13 @@
     // Country has its own column, so it is deliberately left out here.
     return [r.address1, r.address2, r.city, r.province, r.zip]
              .filter(Boolean).join(", ") || DASH;
+  }
+
+  // Payment refs arrive on a second, slower fetch; index them by order id.
+  var txIndex = {};
+  function txOf(r){
+    var ref = txIndex[r.id] !== undefined ? txIndex[r.id] : r.txRef;
+    return ref ? ref : DASH;
   }
 
   function sheetRows(){
@@ -537,8 +575,8 @@
           r.total,         // order level, repeated
           r.financial_status ? r.financial_status.toUpperCase() : DASH,
           payMethod(r.gateway),
-          DASH,            // Transaction ID - needs include_transactions=true
-          DASH,            // Payment Link   - not returned by the orders API
+          txOf(r),         // Transaction ID
+          adminLink(r.id), // Payment Link (Shopify admin order page)
           it.lineTotal     // Gross Sales == Product Total, the only summable column
         ]);
       });
@@ -548,8 +586,35 @@
 
   function stamp(){ return new Date().toISOString().slice(0,10); }
 
+  // Payment references need include_transactions=true, which costs one Shopify
+  // call per order (~2 min for 250). Too slow for the dashboard, fine for an
+  // export, so fetch it only here and only for the current filter.
   function exportSheet(){
     if(!view.length){ note("Nothing to export.", "warn"); return; }
+    if(busy){ note("Still loading - try again in a moment.", "warn"); return; }
+
+    var needTx = view.some(function(r){ return !r.hasTx; });
+    if(!needTx){ return writeSheet(); }
+
+    setBusy(true);
+    note("Fetching payment details for " + view.length + " orders - this can take up to two minutes.");
+    setStatus("Fetching payment details...", "stale");
+
+    request(buildUrl(null, true))
+      .then(function(rows){
+        rows.forEach(function(x){ txIndex[x.id] = x.txRef; });
+        setStatus("Live", "");
+        writeSheet();
+      })
+      .catch(function(err){
+        note("Could not fetch payment details (" + err.message + ") - exporting without them.", "warn");
+        setStatus("Live", "");
+        writeSheet();
+      })
+      .then(function(){ setBusy(false); });
+  }
+
+  function writeSheet(){
     var rows = sheetRows();
     var filename = "order-report-" + stamp();
 
