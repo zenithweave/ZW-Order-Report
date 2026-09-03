@@ -122,7 +122,7 @@
     <label class="live" style="gap:5px"><input type="checkbox" id="auto" checked style="width:auto;padding:0"> Auto-refresh</label>
     <button id="pull" class="primary">Pull new orders</button>
     <button id="refresh" class="ghost">Reload all</button>
-    <button id="csv">Export CSV</button>
+    <button id="csv">Export for accounting</button>
     <span id="pullnote" class="note"></span>
   </div>
 
@@ -174,6 +174,7 @@
   </footer>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
 (function(){
   "use strict";
@@ -214,8 +215,25 @@
                ? o.payment_gateway_names.join(", ")
                : (o.gateway || "");
     var items = (o.line_items || []).map(function(li){
-      return { title: li.title || li.name || "", sku: li.sku || "", qty: li.quantity || 0 };
+      var price = parseFloat(li.price || 0) || 0;
+      var qty = li.quantity || 0;
+      // Prefer explicit allocations; total_discount is the pre-2019 fallback.
+      var disc = (li.discount_allocations || []).reduce(function(sum, a){
+        return sum + (parseFloat(a.amount || 0) || 0);
+      }, 0) || (parseFloat(li.total_discount || 0) || 0);
+      return {
+        title: li.title || li.name || "",
+        sku: li.sku || "",
+        qty: qty,
+        price: price,
+        lineTotal: price * qty,
+        discount: disc
+      };
     });
+    // shipping_lines can repeat the same rate; the price set is authoritative.
+    var shipSet = o.total_shipping_price_set && o.total_shipping_price_set.shop_money;
+    var shipping = shipSet ? (parseFloat(shipSet.amount || 0) || 0)
+      : (o.shipping_lines || []).reduce(function(sum, l){ return sum + (parseFloat(l.price || 0) || 0); }, 0);
     return {
       id: o.id,
       order_number: o.order_number || o.number || 0,
@@ -227,6 +245,14 @@
       city: ship.city || "",
       items: items,
       total: parseFloat(o.total_price || 0) || 0,
+      subtotal: parseFloat(o.subtotal_price || 0) || 0,
+      discounts: parseFloat(o.total_discounts || 0) || 0,
+      shipping: shipping,
+      address1: ship.address1 || "",
+      address2: ship.address2 || "",
+      province: ship.province || "",
+      zip: ship.zip || "",
+      country: ship.country || "",
       currency: o.currency || "SAR",
       financial_status: o.financial_status || "",
       fulfillment_status: o.fulfillment_status || "unfulfilled",
@@ -451,28 +477,119 @@
       .then(function(){ setBusy(false); });
   }
 
-  function csv(){
-    var head = ["Order","Date","Customer","Phone","Email","City","Items","SKUs","Total","Currency","Payment","Gateway","Fulfilment"];
-    var lines = [head];
+  // ---- Accounting export -------------------------------------------------
+  // Mirrors the accountants' existing workbook exactly: 24 columns, one row
+  // per product line (so a 9-item order occupies 9 rows), with order-level
+  // values repeated down each of that order's rows.
+  var SHEET_COLUMNS = [
+    "Order Number","Order Date","Customer Name","Email","Phone","Full Address",
+    "City","Province","Zip","Country","Product Name","SKU","Product Price",
+    "Product Qty","Product Total","Discount Amount","Shipping Fees",
+    "Order Subtotal","Total Amount","Order Status","Payment Method",
+    "Transaction ID","Payment Link","Gross Sales"
+  ];
+
+  var DASH = "-"; // their convention for an empty cell
+  function orDash(v){
+    return (v === null || v === undefined || v === "") ? DASH : v;
+  }
+
+  function payMethod(gw){
+    if(!gw) return DASH;
+    if(/cash on delivery|^cod$/i.test(gw)) return "COD";
+    return gw;
+  }
+
+  function fullAddress(r){
+    // Country has its own column, so it is deliberately left out here.
+    return [r.address1, r.address2, r.city, r.province, r.zip]
+             .filter(Boolean).join(", ") || DASH;
+  }
+
+  function sheetRows(){
+    var out = [];
     view.forEach(function(r){
-      lines.push([
-        r.label, r.created_at, r.customer, r.phone, r.email, r.city,
-        r.items.map(function(i){ return i.title + (i.qty>1 ? " x"+i.qty : ""); }).join(" | "),
-        r.items.map(function(i){ return i.sku; }).filter(Boolean).join(" | "),
-        r.total, r.currency, r.financial_status, r.gateway, r.fulfillment_status
-      ]);
+      var d = r.created_at ? new Date(r.created_at) : null;
+      var orderDate = (d && !isNaN(d))
+        ? new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
+        : DASH;
+      var items = r.items.length ? r.items : [{ title:"", sku:"", qty:0, price:0, lineTotal:0, discount:0 }];
+      items.forEach(function(it){
+        out.push([
+          r.order_number || DASH,
+          orderDate,
+          orDash(r.customer),
+          orDash(r.email),
+          orDash(r.phone),
+          fullAddress(r),
+          orDash(r.city),
+          orDash(r.province),
+          orDash(r.zip),
+          orDash(r.country),
+          orDash(it.title),
+          orDash(it.sku),
+          it.price,
+          it.qty,
+          it.lineTotal,
+          it.discount,
+          r.shipping,      // order level, repeated
+          r.subtotal,      // order level, repeated
+          r.total,         // order level, repeated
+          r.financial_status ? r.financial_status.toUpperCase() : DASH,
+          payMethod(r.gateway),
+          DASH,            // Transaction ID - needs include_transactions=true
+          DASH,            // Payment Link   - not returned by the orders API
+          it.lineTotal     // Gross Sales == Product Total, the only summable column
+        ]);
+      });
     });
-    var out = lines.map(function(cols){
-      return cols.map(function(c){
-        var s = String(c == null ? "" : c);
-        return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
-      }).join(",");
-    }).join("\r\n");
-    // BOM keeps Arabic text readable when the file is opened in Excel.
-    var blob = new Blob(["﻿" + out], { type: "text/csv;charset=utf-8;" });
+    return out;
+  }
+
+  function stamp(){ return new Date().toISOString().slice(0,10); }
+
+  function exportSheet(){
+    if(!view.length){ note("Nothing to export.", "warn"); return; }
+    var rows = sheetRows();
+    var filename = "order-report-" + stamp();
+
+    if(typeof XLSX === "undefined"){
+      // CDN blocked or offline: same columns, same row structure, as CSV.
+      var all = [SHEET_COLUMNS].concat(rows.map(function(r){
+        return r.map(function(c){
+          return (c instanceof Date) ? c.toISOString().slice(0,10) : c;
+        });
+      }));
+      var out = all.map(function(cols){
+        return cols.map(function(c){
+          var v = String(c == null ? "" : c);
+          return /[",\n]/.test(v) ? '"' + v.replace(/"/g,'""') + '"' : v;
+        }).join(",");
+      }).join("\r\n");
+      download(new Blob(["﻿" + out], { type:"text/csv;charset=utf-8;" }), filename + ".csv");
+      note("Exported " + rows.length + " rows as CSV (spreadsheet library unavailable).", "ok");
+      return;
+    }
+
+    var ws = XLSX.utils.aoa_to_sheet([SHEET_COLUMNS].concat(rows), { cellDates: true });
+    ws["!cols"] = [
+      {wch:12},{wch:12},{wch:22},{wch:26},{wch:16},{wch:46},{wch:14},{wch:14},
+      {wch:10},{wch:14},{wch:38},{wch:16},{wch:12},{wch:10},{wch:13},{wch:14},
+      {wch:13},{wch:14},{wch:13},{wch:14},{wch:16},{wch:16},{wch:14},{wch:12}
+    ];
+    ws["!freeze"] = { xSplit:0, ySplit:1 };
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+    var buf = XLSX.write(wb, { bookType:"xlsx", type:"array", cellDates:true });
+    download(new Blob([buf], { type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
+             filename + ".xlsx");
+    note("Exported " + rows.length + " rows across " + view.length + " orders.", "ok");
+  }
+
+  function download(blob, name){
     var a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = "order-report-" + new Date().toISOString().slice(0,10) + ".csv";
+    a.download = name;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     setTimeout(function(){ URL.revokeObjectURL(a.href); }, 1000);
   }
@@ -487,7 +604,7 @@
   $("limit").addEventListener("change", load);
   $("refresh").addEventListener("click", load);
   $("pull").addEventListener("click", pullNew);
-  $("csv").addEventListener("click", csv);
+  $("csv").addEventListener("click", exportSheet);
   $("auto").addEventListener("change", schedule);
   $("applyDate").addEventListener("click", function(){ rangeNote(); load(); });
   $("clearDate").addEventListener("click", function(){
