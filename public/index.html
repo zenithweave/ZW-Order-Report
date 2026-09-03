@@ -78,6 +78,16 @@
   .note.ok{color:var(--ok-ink)}
   .note.warn{color:var(--warn-ink)}
   button.ghost{background:transparent}
+  .progress{margin:0 0 14px;padding:13px 15px;background:var(--panel);border:1px solid var(--line);
+            border-radius:10px;box-shadow:var(--shadow)}
+  .progress .row{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:9px}
+  .progress .stage{font-size:13px;font-weight:500}
+  .progress .pct{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .bar{height:7px;border-radius:999px;background:var(--line);overflow:hidden}
+  .bar i{display:block;height:100%;width:0;border-radius:999px;background:var(--accent);
+         transition:width .35s ease}
+  .bar.indet i{width:35%;animation:slide 1.1s ease-in-out infinite}
+  @keyframes slide{0%{margin-left:-35%}100%{margin-left:100%}}
 </style>
 </head>
 <body>
@@ -95,6 +105,14 @@
   </header>
 
   <div id="errbox" class="err-box" hidden></div>
+
+  <div id="progress" class="progress" hidden>
+    <div class="row">
+      <span class="stage" id="pg-stage">Working…</span>
+      <span class="pct" id="pg-pct"></span>
+    </div>
+    <div class="bar" id="pg-bar"><i id="pg-fill"></i></div>
+  </div>
 
   <div class="tiles">
     <div class="tile"><div class="k">Orders</div><div class="v" id="t-count">—</div></div>
@@ -425,6 +443,23 @@
     }
   }
 
+  function progress(stage, pct){
+    var box = $("progress");
+    box.hidden = false;
+    $("pg-stage").textContent = stage;
+    if(pct === null || pct === undefined){
+      $("pg-bar").className = "bar indet";
+      $("pg-pct").textContent = "";
+    } else {
+      $("pg-bar").className = "bar";
+      $("pg-fill").style.width = Math.max(0, Math.min(100, pct)) + "%";
+      $("pg-pct").textContent = Math.round(pct) + "%";
+    }
+  }
+  function progressDone(delay){
+    setTimeout(function(){ $("progress").hidden = true; $("pg-fill").style.width = "0"; }, delay || 900);
+  }
+
   function setBusy(on){
     busy = on;
     $("refresh").disabled = on;
@@ -593,25 +628,48 @@
     if(!view.length){ note("Nothing to export.", "warn"); return; }
     if(busy){ note("Still loading - try again in a moment.", "warn"); return; }
 
-    var needTx = view.some(function(r){ return !r.hasTx; });
-    if(!needTx){ return writeSheet(); }
-
     setBusy(true);
-    note("Fetching payment details for " + view.length + " orders - this can take up to two minutes.");
-    setStatus("Fetching payment details...", "stale");
+    $("csv").textContent = "Exporting…";
+    progress("Connecting to payment gateway…", null);
 
-    request(buildUrl(null, true))
-      .then(function(rows){
-        rows.forEach(function(x){ txIndex[x.id] = x.txRef; });
-        setStatus("Live", "");
-        writeSheet();
+    var r = activeRange();
+    var qs = ["limit=" + encodeURIComponent($("limit").value)];
+    if(r.from) qs.push("created_at_min=" + encodeURIComponent(dayStart(r.from)));
+    if(r.to)   qs.push("created_at_max=" + encodeURIComponent(dayEnd(r.to)));
+
+    var t0 = Date.now();
+    // The bar creeps while the single GraphQL call is in flight; it is fast
+    // (~1.5s for 250 orders) so this is mostly reassurance, not real telemetry.
+    var creep = setInterval(function(){
+      var pct = Math.min(75, ((Date.now() - t0) / 4000) * 75);
+      progress("Fetching payment details for " + view.length + " orders…", pct);
+    }, 120);
+
+    fetch(API + "/payments?" + qs.join("&"), { cache: "no-store" })
+      .then(function(res){
+        if(!res.ok) throw new Error("HTTP " + res.status);
+        return res.json();
+      })
+      .then(function(data){
+        clearInterval(creep);
+        if(!data || data.success === false) throw new Error((data && data.message) || "payments lookup failed");
+        var map = data.payments || {};
+        Object.keys(map).forEach(function(id){ txIndex[id] = map[id]; });
+        progress("Matching " + data.count + " payment references…", 85);
+        note("Payment details loaded in " + ((Date.now() - t0)/1000).toFixed(1) + "s.", "ok");
       })
       .catch(function(err){
+        clearInterval(creep);
         note("Could not fetch payment details (" + err.message + ") - exporting without them.", "warn");
-        setStatus("Live", "");
-        writeSheet();
       })
-      .then(function(){ setBusy(false); });
+      .then(function(){
+        progress("Building spreadsheet…", 95);
+        writeSheet();
+        progress("Done", 100);
+        progressDone();
+        $("csv").textContent = "Export for accounting";
+        setBusy(false);
+      });
   }
 
   function writeSheet(){

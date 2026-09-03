@@ -664,6 +664,87 @@ app.get('/apps/order-report-proxy/debug/order/:orderId', async (req, res) => {
 /**
  * GraphQL endpoint for more complex queries (optional)
  */
+/**
+ * Payment references for a set of orders.
+ *
+ * The REST path needs one call per order (~116s for 250, bounded by Shopify's
+ * 2 req/sec limit). GraphQL returns transactions inline with the orders, so the
+ * same 250 orders cost a single request at ~16 query points.
+ */
+const PAYMENTS_QUERY = `
+  query Payments($cursor: String, $q: String, $size: Int!) {
+    orders(first: $size, after: $cursor, query: $q, sortKey: CREATED_AT, reverse: true) {
+      pageInfo { hasNextPage endCursor }
+      edges { node {
+        legacyResourceId
+        transactions(first: 5) { id kind status paymentId authorizationCode }
+      } }
+    }
+  }`;
+
+// Mirror the REST picker: a successful sale/capture, else a pending sale (COD),
+// so voided and failed attempts are never reported as the payment.
+function pickTransaction(txs) {
+  let fallback = null;
+  for (const t of txs || []) {
+    const kind = (t.kind || '').toUpperCase();
+    const status = (t.status || '').toUpperCase();
+    if ((kind === 'SALE' || kind === 'CAPTURE') && status === 'SUCCESS') return t;
+    if (!fallback && kind === 'SALE' && status === 'PENDING') fallback = t;
+  }
+  return fallback || (txs && txs[0]) || null;
+}
+
+app.get('/apps/order-report-proxy/payments', async (req, res) => {
+  try {
+    const { created_at_min, created_at_max } = req.query;
+    const limit = Math.min(parseInt(req.query.limit, 10) || 250, 1000);
+
+    const filters = [];
+    if (created_at_min) filters.push(`created_at:>='${created_at_min}'`);
+    if (created_at_max) filters.push(`created_at:<='${created_at_max}'`);
+    const q = filters.join(' ') || null;
+
+    const payments = {};
+    let cursor = null;
+    let fetched = 0;
+
+    while (fetched < limit) {
+      const size = Math.min(250, limit - fetched);
+      const response = await axios.post(
+        `https://${SHOPIFY_STORE}/admin/api/2024-01/graphql.json`,
+        { query: PAYMENTS_QUERY, variables: { cursor, q, size } },
+        { headers: {
+            'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
+            'Content-Type': 'application/json'
+        } }
+      );
+
+      const body = response.data;
+      if (body.errors) throw new Error(JSON.stringify(body.errors).slice(0, 300));
+
+      const orders = body.data.orders;
+      for (const edge of orders.edges) {
+        const node = edge.node;
+        const tx = pickTransaction(node.transactions);
+        payments[node.legacyResourceId] = tx
+          ? (tx.paymentId || tx.authorizationCode || (tx.id ? String(tx.id).split('/').pop() : ''))
+          : '';
+        fetched++;
+      }
+
+      if (!orders.pageInfo.hasNextPage) break;
+      cursor = orders.pageInfo.endCursor;
+    }
+
+    console.log(`💳 Payment references resolved for ${fetched} orders`);
+    res.json({ success: true, count: fetched, payments });
+  } catch (error) {
+    console.error('❌ Error in /payments endpoint:', error.message);
+    res.status(500).json({ success: false, error: 'Failed to fetch payments', message: error.message });
+  }
+});
+
 app.post('/apps/order-report-proxy/graphql', async (req, res) => {
   try {
     const { query, variables } = req.body;
